@@ -1,0 +1,98 @@
+name: Release Datasets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. 2026-02). Defaults to dataset-YYYY-MM-DD.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (lightweight, no LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Prepare workspace
+        id: workspace
+        uses: ./.github/actions/prepare-workspace
+        with:
+          free-disk-space: 'true'
+
+      # --- Package each region ---
+      - name: Package nacional
+        id: pkg-nacional
+        uses: ./.github/actions/package-region
+        with:
+          region: nacional
+
+      - name: Package ted
+        id: pkg-ted
+        uses: ./.github/actions/package-region
+        with:
+          region: ted
+
+      - name: Package catalunya
+        id: pkg-catalunya
+        uses: ./.github/actions/package-region
+        with:
+          region: catalunya
+
+      - name: Package valencia
+        id: pkg-valencia
+        uses: ./.github/actions/package-region
+        with:
+          region: valencia
+
+      - name: Package ccaa_Andalucia
+        id: pkg-andalucia
+        uses: ./.github/actions/package-region
+        with:
+          region: ccaa_Andalucia
+
+      - name: Package comunidad_madrid
+        id: pkg-madrid
+        uses: ./.github/actions/package-region
+        with:
+          region: comunidad_madrid
+
+      # --- Build summary table ---
+      - name: Build summary
+        id: summary
+        run: |
+          SUMMARY=""
+          add_row() {
+            local name="$1" size="$2" count="$3" skipped="$4"
+            if [ "$skipped" != "true" ] && [ "$count" -gt 0 ] 2>/dev/null; then
+              SUMMARY="${SUMMARY}| \`${name}.zip\` | ${size} | ${count} |\n"
+            fi
+          }
+
+          add_row "nacional"         "${{ steps.pkg-nacional.outputs.zip-size }}"   "${{ steps.pkg-nacional.outputs.file-count }}"   "${{ steps.pkg-nacional.outputs.skipped }}"
+          add_row "ted"              "${{ steps.pkg-ted.outputs.zip-size }}"         "${{ steps.pkg-ted.outputs.file-count }}"         "${{ steps.pkg-ted.outputs.skipped }}"
+          add_row "catalunya"        "${{ steps.pkg-catalunya.outputs.zip-size }}"   "${{ steps.pkg-catalunya.outputs.file-count }}"   "${{ steps.pkg-catalunya.outputs.skipped }}"
+          add_row "valencia"         "${{ steps.pkg-valencia.outputs.zip-size }}"    "${{ steps.pkg-valencia.outputs.file-count }}"    "${{ steps.pkg-valencia.outputs.skipped }}"
+          add_row "ccaa_Andalucia"   "${{ steps.pkg-andalucia.outputs.zip-size }}"   "${{ steps.pkg-andalucia.outputs.file-count }}"   "${{ steps.pkg-andalucia.outputs.skipped }}"
+          add_row "comunidad_madrid" "${{ steps.pkg-madrid.outputs.zip-size }}"      "${{ steps.pkg-madrid.outputs.file-count }}"      "${{ steps.pkg-madrid.outputs.skipped }}"
+
+          echo "table<<EOFSUM" >> "$GITHUB_OUTPUT"
+          echo -e "$SUMMARY" >> "$GITHUB_OUTPUT"
+          echo "EOFSUM" >> "$GITHUB_OUTPUT"
+
+          echo "=== Release assets ==="
+          ls -lh release-assets/
+
+      # --- Create release ---
+      - name: Create release
+        uses: ./.github/actions/create-release
+        with:
+          tag-name: ${{ inputs.tag_name }}
+          summary-table: ${{ steps.summary.outputs.table }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}

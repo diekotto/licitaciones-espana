@@ -1,0 +1,103 @@
+name: Create Release
+description: Generate release notes and create a GitHub release with zip assets
+
+inputs:
+  tag-name:
+    description: 'Release tag (empty = dataset-YYYY-MM-DD)'
+    required: false
+    default: ''
+  assets-dir:
+    description: Directory containing zip files to attach
+    required: false
+    default: release-assets
+  summary-table:
+    description: Markdown table rows for release notes (pipe-delimited)
+    required: true
+  github-token:
+    description: GitHub token for creating the release
+    required: true
+  draft:
+    description: Create release as draft
+    required: false
+    default: 'false'
+
+outputs:
+  tag:
+    description: The tag used for the release
+    value: ${{ steps.tag.outputs.tag }}
+  release-url:
+    description: URL of the created release
+    value: ${{ steps.release.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine tag
+      id: tag
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.tag-name }}" ]; then
+          TAG="${{ inputs.tag-name }}"
+        else
+          TAG="dataset-$(date +%Y-%m-%d)"
+        fi
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "title=Datasets $TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Generate release notes
+      shell: bash
+      run: |
+        cat > release-notes.md <<'HEADER'
+        ## Datasets de Licitaciones de España
+
+        Archivos parquet empaquetados por región, descargables directamente **sin necesidad de Git LFS**.
+
+        ### Contenido
+
+        | Archivo | Tamaño | Archivos parquet |
+        |---------|--------|------------------|
+        HEADER
+
+        echo '${{ inputs.summary-table }}' >> release-notes.md
+
+        cat >> release-notes.md <<'FOOTER'
+
+        ### Uso
+
+        1. Descarga el zip de la región que necesites
+        2. Descomprime el archivo
+        3. Lee los parquet con pandas:
+
+        ```python
+        import pandas as pd
+        df = pd.read_parquet("nombre_archivo.parquet")
+        ```
+
+        > Generado automáticamente desde GitHub Actions.
+        FOOTER
+
+    - name: Create release
+      id: release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        TAG="${{ steps.tag.outputs.tag }}"
+        TITLE="${{ steps.tag.outputs.title }}"
+        DRAFT_FLAG=""
+        if [ "${{ inputs.draft }}" = "true" ]; then
+          DRAFT_FLAG="--draft"
+        fi
+
+        git tag "$TAG" 2>/dev/null || true
+        git push origin "$TAG" 2>/dev/null || true
+
+        URL=$(gh release create "$TAG" \
+          --title "$TITLE" \
+          --notes-file release-notes.md \
+          --latest \
+          $DRAFT_FLAG \
+          ${{ inputs.assets-dir }}/*.zip 2>&1)
+
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+        echo "Release created: $URL"

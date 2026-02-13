@@ -1,0 +1,67 @@
+name: Package Region
+description: Zip all parquet files for a single region
+
+inputs:
+  region:
+    description: Region directory name (e.g. nacional, ted, catalunya)
+    required: true
+  output-dir:
+    description: Directory to place the zip file
+    required: false
+    default: release-assets
+
+outputs:
+  zip-path:
+    description: Path to the created zip file
+    value: ${{ steps.package.outputs.zip-path }}
+  file-count:
+    description: Number of parquet files packaged
+    value: ${{ steps.package.outputs.file-count }}
+  zip-size:
+    description: Human-readable zip file size
+    value: ${{ steps.package.outputs.zip-size }}
+  skipped:
+    description: "'true' if region directory was missing or empty"
+    value: ${{ steps.package.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Package ${{ inputs.region }}
+      id: package
+      shell: bash
+      run: |
+        region="${{ inputs.region }}"
+        output_dir="${{ inputs.output-dir }}"
+        mkdir -p "$output_dir"
+
+        if [ ! -d "$region" ]; then
+          echo "::warning::Directory '$region' not found — skipping"
+          echo "skipped=true" >> "$GITHUB_OUTPUT"
+          echo "file-count=0" >> "$GITHUB_OUTPUT"
+          echo "zip-size=0" >> "$GITHUB_OUTPUT"
+          echo "zip-path=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        mapfile -t files < <(find "$region" -name "*.parquet" -type f)
+        count=${#files[@]}
+
+        if [ "$count" -eq 0 ]; then
+          echo "::warning::No parquet files in '$region' — skipping"
+          echo "skipped=true" >> "$GITHUB_OUTPUT"
+          echo "file-count=0" >> "$GITHUB_OUTPUT"
+          echo "zip-size=0" >> "$GITHUB_OUTPUT"
+          echo "zip-path=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "Packaging $region ($count parquet files)..."
+        printf '%s\n' "${files[@]}" | zip -0 "${output_dir}/${region}.zip" -@
+        size=$(du -h "${output_dir}/${region}.zip" | cut -f1)
+
+        echo "  -> ${region}.zip: $size ($count files)"
+        echo "skipped=false" >> "$GITHUB_OUTPUT"
+        echo "file-count=$count" >> "$GITHUB_OUTPUT"
+        echo "zip-size=$size" >> "$GITHUB_OUTPUT"
+        echo "zip-path=${output_dir}/${region}.zip" >> "$GITHUB_OUTPUT"
