@@ -1,0 +1,61 @@
+name: Prepare Workspace
+description: Free disk space, pull LFS files, and verify no LFS pointers remain
+
+inputs:
+  free-disk-space:
+    description: Remove large pre-installed packages to free disk space
+    required: false
+    default: 'true'
+
+outputs:
+  parquet-count:
+    description: Total number of parquet files found
+    value: ${{ steps.verify.outputs.parquet-count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Free up disk space
+      if: inputs.free-disk-space == 'true'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner
+        df -h /
+
+    - name: Pull LFS files
+      shell: bash
+      run: git lfs pull
+
+    - name: Verify LFS files
+      id: verify
+      shell: bash
+      run: |
+        total=$(find . -name "*.parquet" -type f | wc -l)
+        pointers=0
+        while IFS= read -r f; do
+          if head -1 "$f" 2>/dev/null | grep -q "^version https://git-lfs"; then
+            pointers=$((pointers + 1))
+          fi
+        done < <(find . -name "*.parquet" -type f)
+
+        echo "Parquet files: $total (LFS pointers remaining: $pointers)"
+
+        if [ "$pointers" -gt 0 ]; then
+          echo "Retrying LFS pull..."
+          git lfs pull
+
+          pointers=0
+          while IFS= read -r f; do
+            if head -1 "$f" 2>/dev/null | grep -q "^version https://git-lfs"; then
+              pointers=$((pointers + 1))
+            fi
+          done < <(find . -name "*.parquet" -type f)
+
+          if [ "$pointers" -gt 0 ]; then
+            echo "::error::$pointers LFS files could not be downloaded"
+            exit 1
+          fi
+        fi
+
+        echo "All $total LFS files downloaded successfully."
+        echo "parquet-count=$total" >> "$GITHUB_OUTPUT"

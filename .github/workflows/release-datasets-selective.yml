@@ -1,12 +1,32 @@
-name: Release Datasets
+name: Release Datasets (Selective)
 
 on:
   workflow_dispatch:
     inputs:
+      regions:
+        description: 'Comma-separated regions (empty = all). Options: nacional,ted,catalunya,valencia,ccaa_Andalucia,comunidad_madrid'
+        required: false
+        type: string
+        default: ''
       tag_name:
         description: 'Release tag (e.g. 2026-02). Defaults to dataset-YYYY-MM-DD.'
         required: false
         type: string
+      skip_packaging:
+        description: 'Only test LFS checkout (skip packaging and release)'
+        required: false
+        type: boolean
+        default: false
+      skip_release:
+        description: 'Package but do not create a release'
+        required: false
+        type: boolean
+        default: false
+      draft_release:
+        description: 'Create release as draft (not public)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -20,45 +40,61 @@ jobs:
         with:
           lfs: false
 
+      - name: Resolve regions
+        id: regions
+        run: |
+          if [ -z "${{ inputs.regions }}" ]; then
+            echo "list=nacional,ted,catalunya,valencia,ccaa_Andalucia,comunidad_madrid" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=${{ inputs.regions }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Selected regions: $(cat "$GITHUB_OUTPUT" | grep list | cut -d= -f2)"
+
       - name: Prepare workspace
         id: workspace
         uses: ./.github/actions/prepare-workspace
         with:
           free-disk-space: 'true'
 
-      # --- Package each region ---
+      # --- Package each region (guarded) ---
       - name: Package nacional
         id: pkg-nacional
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'nacional') }}
         uses: ./.github/actions/package-region
         with:
           region: nacional
 
       - name: Package ted
         id: pkg-ted
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'ted') }}
         uses: ./.github/actions/package-region
         with:
           region: ted
 
       - name: Package catalunya
         id: pkg-catalunya
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'catalunya') }}
         uses: ./.github/actions/package-region
         with:
           region: catalunya
 
       - name: Package valencia
         id: pkg-valencia
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'valencia') }}
         uses: ./.github/actions/package-region
         with:
           region: valencia
 
       - name: Package ccaa_Andalucia
         id: pkg-andalucia
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'ccaa_Andalucia') }}
         uses: ./.github/actions/package-region
         with:
           region: ccaa_Andalucia
 
       - name: Package comunidad_madrid
         id: pkg-madrid
+        if: ${{ !inputs.skip_packaging && contains(steps.regions.outputs.list, 'comunidad_madrid') }}
         uses: ./.github/actions/package-region
         with:
           region: comunidad_madrid
@@ -66,6 +102,7 @@ jobs:
       # --- Build summary table ---
       - name: Build summary
         id: summary
+        if: ${{ !inputs.skip_packaging }}
         run: |
           SUMMARY=""
           add_row() {
@@ -87,12 +124,14 @@ jobs:
           echo "EOFSUM" >> "$GITHUB_OUTPUT"
 
           echo "=== Release assets ==="
-          ls -lh release-assets/
+          ls -lh release-assets/ 2>/dev/null || echo "(no assets)"
 
-      # --- Create release ---
+      # --- Create release (guarded) ---
       - name: Create release
+        if: ${{ !inputs.skip_packaging && !inputs.skip_release }}
         uses: ./.github/actions/create-release
         with:
           tag-name: ${{ inputs.tag_name }}
           summary-table: ${{ steps.summary.outputs.table }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          draft: ${{ inputs.draft_release && 'true' || 'false' }}
